@@ -15,6 +15,13 @@ def issue(key, labels=(), status="進行中"):
                        issuetype="Task", labels=list(labels))
 
 
+def sort_by_phase_label(issues, phase_labels):
+    """The in-group sort with only phase labels configured."""
+    cfg = board.Config(site="s", email="e", api_token="t", jql="q",
+                       phase_labels=phase_labels)
+    return board.sort_cards(issues, cfg)
+
+
 # ---- config
 
 
@@ -53,29 +60,29 @@ def test_phase_labels_default_to_empty(tmp_path):
 
 def test_labelled_issues_come_first_in_the_configured_order():
     issues = [issue("X-1"), issue("X-2", ["jb_先方確認待ち"]), issue("X-3", ["jb_効果確認中"])]
-    order = [i.key for i in board.sort_by_phase_label(issues, [VERIFY, WAITING])]
+    order = [i.key for i in sort_by_phase_label(issues, [VERIFY, WAITING])]
     assert order == ["X-3", "X-2", "X-1"]
 
 
 def test_unlabelled_issues_keep_the_jql_order():
     issues = [issue("X-1"), issue("X-2"), issue("X-3")]
-    assert board.sort_by_phase_label(issues, [VERIFY]) == issues
+    assert sort_by_phase_label(issues, [VERIFY]) == issues
 
 
 def test_other_labels_do_not_move_a_card():
-    """Labels the board knows nothing about (JTH_UAT etc.) must not reorder."""
-    issues = [issue("X-1", ["JTH_UAT"]), issue("X-2", ["jb_効果確認中"])]
-    assert [i.key for i in board.sort_by_phase_label(issues, [VERIFY])] == ["X-2", "X-1"]
+    """Labels the board knows nothing about (someone_elses etc.) must not reorder."""
+    issues = [issue("X-1", ["someone_elses"]), issue("X-2", ["jb_効果確認中"])]
+    assert [i.key for i in sort_by_phase_label(issues, [VERIFY])] == ["X-2", "X-1"]
 
 
 def test_an_issue_with_two_phase_labels_takes_the_best_rank():
     issues = [issue("X-1", ["jb_先方確認待ち"]),
               issue("X-2", ["jb_先方確認待ち", "jb_効果確認中"])]
-    assert [i.key for i in board.sort_by_phase_label(issues, [VERIFY, WAITING])] == ["X-2", "X-1"]
+    assert [i.key for i in sort_by_phase_label(issues, [VERIFY, WAITING])] == ["X-2", "X-1"]
 
 
 def test_phase_labels_of_returns_configured_ones_in_order():
-    it = issue("X-1", ["JTH_UAT", "jb_先方確認待ち", "jb_効果確認中"])
+    it = issue("X-1", ["someone_elses", "jb_先方確認待ち", "jb_効果確認中"])
     assert board.phase_labels_of(it, [VERIFY, WAITING]) == [VERIFY, WAITING]
     assert board.phase_labels_of(issue("X-2"), [VERIFY]) == []
 

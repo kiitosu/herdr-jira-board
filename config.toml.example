@@ -42,6 +42,23 @@ api_token = ""
 # label = "jb_verifying"
 # display = "verifying"
 
+# Optional: the board's priority ladder. Rules are evaluated top-down and the
+# first match gives the card its rank: it shows a marker (`display`, or P1/P2/…
+# by position) and sorts to the top of its status group, ahead of the phase
+# labels. `epic` is the parent epic — its key, or a piece of its name; omit it
+# to match any epic. `priority` is the Jira priority name; omit it to match any
+# ("regardless of priority"). Cards matching no rule keep their usual place.
+# [[board_priority]]
+# epic = "ST test"
+# priority = "Blocker"
+#
+# [[board_priority]]
+# epic = "ST test"            # any remaining ST issue, whatever its priority
+#
+# [[board_priority]]
+# epic = "UAT test"
+# priority = "Severe"
+
 # Optional: label changes to make when a transition run from the board lands
 # on a status (compared case-insensitively). `add` puts labels on; `remove`
 # takes the listed ones off; `remove_except` — exclusive with `remove` —

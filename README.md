@@ -40,6 +40,10 @@ session for any card — with live session status badges on the board.
   site-wide, so one name works across every project without touching a
   workflow; labelled cards show the label and sort to the top of their status
   group ([details](#phase-labels))
+- **Board priority** (`board_priority`) ranks cards by their parent epic and
+  Jira priority through an ordered rule list — an ST blocker above a UAT
+  blocker above any other ST issue. Ranked cards show `P1`/`P2`/… and sort to
+  the top of their status group ([details](#board-priority))
 - **Status-linked labels** (`status_labels`) add and shed labels on their own
   when a transition run from the board lands on a status — put "needs
   verifying" on whatever reaches review, shed the board's other labels on
@@ -91,7 +95,7 @@ api_token = "<your API token>"
 
 See the comments in `config.toml.example` for all options
 (`api_token_cmd`, `jql`, `exclude_statuses`, `status_order`, `phase_labels`,
-`status_labels`, `language`, `preview`, `[project_dirs]`).
+`board_priority`, `status_labels`, `language`, `preview`, `[project_dirs]`).
 
 ## Usage
 
@@ -184,6 +188,38 @@ project on the site, so a bare `verifying` would show up in everyone's
 autocomplete. Only `display` reaches the card, so the prefix costs no width.
 A plain string entry is also accepted (`phase_labels = ["verifying"]`) when you
 don't need a separate display name.
+
+### Board priority
+
+Which card to pick up next rarely follows one field: it is "a blocker in the
+ST epic first, then a UAT blocker, then anything else in ST" — orderings no
+single epic-then-priority comparison can express. `board_priority` is an
+ordered rule list; a card gets the rank of the first rule it matches:
+
+```toml
+[[board_priority]]
+epic = "ST test"
+priority = "Blocker"
+
+[[board_priority]]
+epic = "UAT test"
+priority = "Blocker"
+
+[[board_priority]]
+epic = "ST test"            # any remaining ST issue, whatever its priority
+```
+
+`epic` names the card's parent epic — by key (exact) or by a piece of its
+name, so `"ST test"` matches the epic "ST test (bug filing)"; omit it to match
+any epic. `priority` is the Jira priority name; omit it for "regardless of
+priority". A rule with neither would swallow every card and is ignored.
+
+Ranked cards show a marker — `P1`/`P2`/… by position, or the rule's `display`
+— colored red for the top two rungs and yellow for the next two, like the due
+dates. Inside a status group they sort by rank, ahead of the phase labels
+(the rank answers "which do I pick up", so it wins); cards matching no rule
+keep their usual place after the ranked ones. `--dump` prints the marker and
+`--dump --json` carries `priority`, `epic` and `board_priority` per issue.
 
 ### Status-linked labels
 

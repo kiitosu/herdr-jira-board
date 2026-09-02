@@ -16,11 +16,11 @@ def cfg_with(rules, phase=("jb_a", "jb_b", "jb_c")):
 def test_load_parses_both_rule_forms(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(BASE + 'api_token = "t"\n'
-                 '[[status_labels]]\nstatus = "社内RV中"\nadd = ["jb_x"]\n'
+                 '[[status_labels]]\nstatus = "レビュー中"\nadd = ["jb_x"]\n'
                  '[[status_labels]]\nstatus = "完了"\nremove_except = ["jb_x"]\n')
     cfg = board.Config.load(p)
     assert cfg.status_labels == [
-        StatusLabelRule("社内RV中", ["jb_x"], [], None),
+        StatusLabelRule("レビュー中", ["jb_x"], [], None),
         StatusLabelRule("完了", [], [], ["jb_x"]),
     ]
 
@@ -52,9 +52,9 @@ def test_managed_labels_is_everything_the_config_mentions():
 # ---- the changes a transition triggers
 
 def test_add_rule_adds_only_whats_missing():
-    cfg = cfg_with([StatusLabelRule("社内RV中", add=["jb_a"])])
-    assert board.status_label_changes(cfg, [], "社内RV中") == (["jb_a"], [])
-    assert board.status_label_changes(cfg, ["jb_a"], "社内RV中") == ([], [])
+    cfg = cfg_with([StatusLabelRule("レビュー中", add=["jb_a"])])
+    assert board.status_label_changes(cfg, [], "レビュー中") == (["jb_a"], [])
+    assert board.status_label_changes(cfg, ["jb_a"], "レビュー中") == ([], [])
 
 
 def test_statuses_match_case_insensitively():

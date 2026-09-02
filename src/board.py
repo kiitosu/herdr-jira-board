@@ -4,7 +4,9 @@
 # ///
 """herdr-jira-board: Jira kanban board TUI.
 
-- Three status-category columns (To Do / In Progress / Done)
+- Three status-category columns (To Do / In Progress / Done); inside a group,
+  cards rank by the config's priority ladder (`board_priority`: parent epic ×
+  Jira priority, first matching rule wins) and wear a P1/P2/… marker
 - Move cards between columns via drag & drop or arrow keys (runs Jira transitions);
   config-declared label changes (`status_labels`) apply when a transition lands
 - Enter launches a Claude session for the focused card in a new herdr tab
@@ -309,6 +311,41 @@ class StatusLabelRule:
 
 
 @dataclass
+class BoardPriorityRule:
+    """One step of the board's priority ladder.
+
+    Rules are evaluated top-down and the first match gives the card its rank
+    (`P1` for the first rule, and so on), so "an ST blocker beats a UAT
+    blocker beats any other ST issue" is written as three rules in that order
+    — orderings no single epic-then-priority comparison could express.
+    """
+
+    epic: str = ""  # the parent epic: its key, or a piece of its name; "" = any
+    priority: str = ""  # the Jira priority name; "" = any
+    display: str = ""  # what the card shows; "" = P<rank>
+
+    @classmethod
+    def parse(cls, raw: object) -> "BoardPriorityRule | None":
+        """One `board_priority` entry, or None when it is not usable.
+
+        A rule with neither an epic nor a priority would swallow every card,
+        which can only be a mistake.
+        """
+        if not isinstance(raw, dict) or not (raw.get("epic") or raw.get("priority")):
+            return None
+        return cls(str(raw.get("epic") or ""), str(raw.get("priority") or ""),
+                   str(raw.get("display") or ""))
+
+    def matches(self, issue: Issue) -> bool:
+        if self.epic:
+            wanted = self.epic.casefold()
+            if (wanted != issue.epic_key.casefold()
+                    and not (issue.epic_name and wanted in issue.epic_name.casefold())):
+                return False
+        return not self.priority or self.priority.casefold() == issue.priority.casefold()
+
+
+@dataclass
 class Config:
     site: str
     email: str
@@ -318,6 +355,7 @@ class Config:
     status_order: list[str] = field(default_factory=list)
     phase_labels: list[PhaseLabel] = field(default_factory=list)
     status_labels: list[StatusLabelRule] = field(default_factory=list)
+    board_priority: list[BoardPriorityRule] = field(default_factory=list)
     project_dirs: dict[str, str] = field(default_factory=dict)
     # Whether the session preview starts on; `p` toggles it for the session.
     preview: bool = True
@@ -348,6 +386,9 @@ class Config:
                           if p is not None],
             status_labels=[r for r in map(StatusLabelRule.parse, raw.get("status_labels", []))
                            if r is not None],
+            board_priority=[r for r in map(BoardPriorityRule.parse,
+                                           raw.get("board_priority", []))
+                            if r is not None],
             project_dirs=raw.get("project_dirs", {}),
             preview=bool(raw.get("preview", True)),
         )
@@ -416,6 +457,9 @@ class Issue:
     created: str = ""  # YYYY-MM-DD
     duedate: str | None = None  # YYYY-MM-DD, None when the issue has no due date
     labels: list[str] = field(default_factory=list)
+    priority: str = ""  # Jira priority name ("" when the field is hidden)
+    epic_key: str = ""  # the parent issue, epics in practice ("" when none)
+    epic_name: str = ""
 
 
 class Jira:
@@ -435,12 +479,13 @@ class Jira:
             "/rest/api/3/search/jql",
             json={"jql": self.cfg.jql, "maxResults": 100,
                   "fields": ["summary", "status", "issuetype", "created", "duedate",
-                             "labels"]},
+                             "labels", "priority", "parent"]},
         )
         r.raise_for_status()
         issues = []
         for it in r.json().get("issues", []):
             f = it["fields"]
+            parent = f.get("parent") or {}
             issues.append(Issue(
                 key=it["key"],
                 summary=f.get("summary") or "",
@@ -451,6 +496,9 @@ class Jira:
                 created=(f.get("created") or "")[:10],
                 duedate=f.get("duedate") or None,
                 labels=list(f.get("labels") or []),
+                priority=(f.get("priority") or {}).get("name", ""),
+                epic_key=parent.get("key", ""),
+                epic_name=(parent.get("fields") or {}).get("summary", ""),
             ))
         return exclude_by_status(issues, self.cfg.exclude_statuses)
 
@@ -555,20 +603,56 @@ def group_by_status(issues: list[Issue], order: list[str]) -> list[tuple[str, li
     return [(status, groups[status]) for status in statuses]
 
 
-def sort_by_phase_label(issues: list[Issue], phase_labels: list[PhaseLabel]) -> list[Issue]:
-    """Issues carrying a phase label first, in the configured order.
-
-    Sorting rather than grouping keeps this independent of `status_order`: the
-    status groups stay as they are and the labels only reorder the cards inside
-    one of them. Issues without a phase label keep the JQL order.
-    """
+def phase_rank(issue: Issue, phase_labels: list[PhaseLabel]) -> int:
+    """The issue's best (lowest) phase-label position; past the end when none."""
     ranks = {p.label: i for i, p in enumerate(phase_labels)}
+    return min((ranks[name] for name in issue.labels if name in ranks),
+               default=len(ranks))
 
-    def rank(issue: Issue) -> int:
-        return min((ranks[name] for name in issue.labels if name in ranks),
-                   default=len(ranks))
 
-    return sorted(issues, key=rank)
+def board_priority_rank(cfg: Config, issue: Issue) -> int | None:
+    """The position of the first `board_priority` rule the issue matches."""
+    return next((i for i, rule in enumerate(cfg.board_priority) if rule.matches(issue)),
+                None)
+
+
+# The ladder's top steps are what the eye should catch: red, then yellow,
+# then nothing special — the same escalation the due dates use.
+PRIORITY_TAG_STYLES = ("red", "red", "yellow", "yellow")
+
+
+def board_priority_label(cfg: Config, issue: Issue) -> str:
+    """The issue's priority marker ("P1", or the rule's display name); "" unranked."""
+    rank = board_priority_rank(cfg, issue)
+    if rank is None:
+        return ""
+    return cfg.board_priority[rank].display or f"P{rank + 1}"
+
+
+def board_priority_tag(cfg: Config, issue: Issue) -> str:
+    """The card's priority marker with its style ("P1" red …), "" when unranked."""
+    label = board_priority_label(cfg, issue)
+    if not label:
+        return ""
+    rank = board_priority_rank(cfg, issue)
+    style = PRIORITY_TAG_STYLES[rank] if rank < len(PRIORITY_TAG_STYLES) else "dim"
+    return f"[{style}]{label}[/]"
+
+
+def sort_cards(issues: list[Issue], cfg: Config) -> list[Issue]:
+    """The order cards take inside one status group.
+
+    Board priority first — it answers "which of these do I pick up" — then the
+    phase labels, and the JQL order settles the rest (the sort is stable).
+    Sorting rather than grouping keeps this independent of `status_order`: the
+    status groups stay as they are and only the cards inside one reorder.
+    """
+    def key(issue: Issue) -> tuple[int, int]:
+        rank = board_priority_rank(cfg, issue)
+        return (len(cfg.board_priority) if rank is None else rank,
+                phase_rank(issue, cfg.phase_labels))
+
+    return sorted(issues, key=key)
 
 
 def describe_label_changes(add: list[str], remove: list[str],
@@ -1077,15 +1161,18 @@ class Card(Static, can_focus=True):
         Binding("escape", "app.cancel_move", t("cancel_or_unfocus"), key_display="Esc"),
     ]
 
-    def __init__(self, issue: Issue, phase_labels: list[PhaseLabel] | None = None):
+    def __init__(self, issue: Issue, phase_labels: list[PhaseLabel] | None = None,
+                 priority_tag: str = ""):
         super().__init__()
         self.issue = issue
         self.phase_labels = phase_labels or []
+        self.priority_tag = priority_tag
         self.agent_status: str | None = None
         self.pending_target: str | None = None  # target category (unconfirmed)
         self.render_card()
 
     def render_card(self) -> None:
+        tag = f" {self.priority_tag}" if self.priority_tag else ""
         badge = ""
         if self.agent_status is not None:
             badge = "  " + STATUS_ICONS.get(self.agent_status, f"[dim]{self.agent_status}[/]")
@@ -1093,7 +1180,7 @@ class Card(Static, can_focus=True):
         phases = "".join(f"  [cyan]{p.display}[/]"
                          for p in phase_labels_of(self.issue, self.phase_labels))
         dates = dates_line(self.issue)
-        self.update(f"[b]{self.issue.key}[/b] [dim]{self.issue.status}[/]{badge}{phases}"
+        self.update(f"[b]{self.issue.key}[/b]{tag} [dim]{self.issue.status}[/]{badge}{phases}"
                     f"{pending}\n{self.issue.summary}" + (f"\n{dates}" if dates else ""))
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
@@ -1318,8 +1405,9 @@ class BoardApp(App):
                 # mixes statuses (To Do / Done usually have just one).
                 if len(groups) > 1:
                     col.mount(StatusDivider(status))
-                for issue in sort_by_phase_label(group, self.cfg.phase_labels):
-                    col.mount(Card(issue, self.cfg.phase_labels))
+                for issue in sort_cards(group, self.cfg):
+                    col.mount(Card(issue, self.cfg.phase_labels,
+                                   board_priority_tag(self.cfg, issue)))
         if (first := next(iter(self.query(Card)), None)) is not None:
             first.focus()
         self.update_badges()
@@ -1742,11 +1830,12 @@ def dump_text(cfg: Config, issues: list[Issue], statuses: dict[str, str],
         column = [i for i in issues if i.category == cat]
         lines.append(f"\n== {title} ({len(column)}) ==")
         for issue in column:
+            prio = f" {label}" if (label := board_priority_label(cfg, issue)) else ""
             badge = f" <{status}>" if (status := badge_of(issue, statuses, sessions)) else ""
             badge += "".join(f" <{p.display}>"
                              for p in phase_labels_of(issue, cfg.phase_labels))
             lines.append(
-                f"  {issue.key} [{issue.status}]{badge} ({issue.issuetype}, "
+                f"  {issue.key}{prio} [{issue.status}]{badge} ({issue.issuetype}, "
                 f"{t('created_label')} {issue.created or '-'}, "
                 f"{t('due_label')} {issue.duedate or '-'}) {issue.summary}")
             lines.append(f"    {cfg.site}/browse/{issue.key}")
@@ -1762,6 +1851,9 @@ def dump_json(cfg: Config, issues: list[Issue], statuses: dict[str, str],
                      "issuetype": i.issuetype, "created": i.created, "duedate": i.duedate,
                      "agent_status": badge_of(i, statuses, sessions) or None,
                      "phase_labels": [p.display for p in phase_labels_of(i, cfg.phase_labels)],
+                     "priority": i.priority or None,
+                     "epic": {"key": i.epic_key, "name": i.epic_name} if i.epic_key else None,
+                     "board_priority": board_priority_label(cfg, i) or None,
                      "url": f"{cfg.site}/browse/{i.key}"}
                     for i in issues if i.category == cat]}
         for cat, title in CATEGORY_COLUMNS

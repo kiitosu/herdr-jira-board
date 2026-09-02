@@ -10,7 +10,7 @@ ISSUES = [
 
 TRANSITIONS = [
     {"id": "31", "name": "Review",
-     "to": {"name": "社内RV中", "statusCategory": {"key": "indeterminate"}}},
+     "to": {"name": "レビュー中", "statusCategory": {"key": "indeterminate"}}},
     {"id": "41", "name": "Done", "to": {"name": "完了", "statusCategory": {"key": "done"}}},
 ]
 
@@ -54,7 +54,7 @@ async def test_t_opens_the_picker_and_runs_the_transition(app, monkeypatch):
         await wait_for(pilot, lambda: isinstance(app.screen, board.TransitionPicker))
         # Every transition is offered, same-category ones included.
         assert len(app.screen.transitions) == 2
-        await pilot.press("enter")  # take the first candidate (社内RV中)
+        await pilot.press("enter")  # take the first candidate (レビュー中)
         await wait_for(pilot, lambda: executed)
         assert executed == [("KAN-1", "31")]
 
