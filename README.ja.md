@@ -86,9 +86,9 @@ email = "you@example.com"
 api_token = "<API トークン>"
 ```
 
-すべてのオプション（`api_token_cmd`, `jql`, `exclude_statuses`, `status_order`,
-`phase_labels`, `board_priority`, `status_labels`, `language`, `preview`,
-`[project_dirs]`）は
+すべてのオプション（`api_token_cmd`, `jql`, `exclude_statuses`,
+`exclude_issuetypes`, `status_order`, `phase_labels`, `board_priority`,
+`status_labels`, `language`, `preview`, `[project_dirs]`）は
 `config.toml.example` のコメントを参照してください。
 
 ## 使い方

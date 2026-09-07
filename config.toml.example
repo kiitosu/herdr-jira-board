@@ -28,6 +28,11 @@ api_token = ""
 # so you keep the default query instead of rewriting it.
 # exclude_statuses = ["Resolved"]
 
+# Optional: issue type names to hide from the board, compared case-insensitively.
+# An epic can satisfy the JQL (assigned, open) without being a workable card —
+# its children are. Applied on top of `jql`, like `exclude_statuses`.
+# exclude_issuetypes = ["Epic"]
+
 # Optional: order of the status groups inside a column, compared
 # case-insensitively. A column that mixes several statuses (typically
 # In Progress) shows a divider per status; listed statuses come first in this
