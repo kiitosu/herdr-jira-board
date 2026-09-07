@@ -352,6 +352,7 @@ class Config:
     api_token: str
     jql: str
     exclude_statuses: list[str] = field(default_factory=list)
+    exclude_issuetypes: list[str] = field(default_factory=list)
     status_order: list[str] = field(default_factory=list)
     phase_labels: list[PhaseLabel] = field(default_factory=list)
     status_labels: list[StatusLabelRule] = field(default_factory=list)
@@ -381,6 +382,7 @@ class Config:
                 "assignee = currentUser() AND (statusCategory != Done OR updated >= -7d) ORDER BY updated DESC",
             ),
             exclude_statuses=raw.get("exclude_statuses", []),
+            exclude_issuetypes=raw.get("exclude_issuetypes", []),
             status_order=raw.get("status_order", []),
             phase_labels=[p for p in map(PhaseLabel.parse, raw.get("phase_labels", []))
                           if p is not None],
@@ -500,7 +502,8 @@ class Jira:
                 epic_key=parent.get("key", ""),
                 epic_name=(parent.get("fields") or {}).get("summary", ""),
             ))
-        return exclude_by_status(issues, self.cfg.exclude_statuses)
+        issues = exclude_by_status(issues, self.cfg.exclude_statuses)
+        return exclude_by_issuetype(issues, self.cfg.exclude_issuetypes)
 
     def description(self, key: str) -> str:
         """The issue's description as plain text ("" when it has none)."""
@@ -544,6 +547,19 @@ def exclude_by_status(issues: list[Issue], excluded: list[str]) -> list[Issue]:
         return issues
     drop = {name.casefold() for name in excluded}
     return [i for i in issues if i.status.casefold() not in drop]
+
+
+def exclude_by_issuetype(issues: list[Issue], excluded: list[str]) -> list[Issue]:
+    """Issues whose type name is not listed in `excluded` (case-insensitive).
+
+    An epic can satisfy the JQL (assigned, open) without being a workable
+    card — its children are. This hides a whole type without rewriting `jql`,
+    the way `exclude_statuses` does for a status.
+    """
+    if not excluded:
+        return issues
+    drop = {name.casefold() for name in excluded}
+    return [i for i in issues if i.issuetype.casefold() not in drop]
 
 
 # Block-level ADF nodes end the line they produced; everything else is inline.
@@ -1825,7 +1841,8 @@ def badge_of(issue: Issue, statuses: dict[str, str], sessions: dict[str, str]) -
 def dump_text(cfg: Config, issues: list[Issue], statuses: dict[str, str],
               sessions: dict[str, str]) -> str:
     """The board as plain text, for reading outside the TUI (`--dump`)."""
-    lines = [f"JQL: {cfg.jql}", f"exclude_statuses: {cfg.exclude_statuses}"]
+    lines = [f"JQL: {cfg.jql}", f"exclude_statuses: {cfg.exclude_statuses}",
+             f"exclude_issuetypes: {cfg.exclude_issuetypes}"]
     for cat, title in CATEGORY_COLUMNS:
         column = [i for i in issues if i.category == cat]
         lines.append(f"\n== {title} ({len(column)}) ==")
@@ -1859,6 +1876,7 @@ def dump_json(cfg: Config, issues: list[Issue], statuses: dict[str, str],
         for cat, title in CATEGORY_COLUMNS
     ]
     return json.dumps({"jql": cfg.jql, "exclude_statuses": cfg.exclude_statuses,
+                       "exclude_issuetypes": cfg.exclude_issuetypes,
                        "columns": columns}, ensure_ascii=False, indent=1)
 
 
