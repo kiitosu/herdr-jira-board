@@ -48,6 +48,9 @@ session for any card — with live session status badges on the board.
   when a transition run from the board lands on a status — put "needs
   verifying" on whatever reaches review, shed the board's other labels on
   Done ([details](#status-linked-labels))
+- **Hidden-but-noticeable cards** (`exclude_labels`): a card carrying a listed
+  label ("won't do", say) leaves the board, but its column title keeps the
+  count and `h` reveals the hidden cards dimmed, in place
 - Session status badges (working / blocked / idle / done) on each card,
   refreshed every 5 seconds via `herdr agent list`
 - Each card shows its created date and due date; overdue is red, due within
@@ -95,8 +98,8 @@ api_token = "<your API token>"
 
 See the comments in `config.toml.example` for all options
 (`api_token_cmd`, `jql`, `exclude_statuses`, `exclude_issuetypes`,
-`status_order`, `phase_labels`, `board_priority`, `status_labels`, `language`,
-`preview`, `[project_dirs]`).
+`exclude_labels`, `status_order`, `phase_labels`, `board_priority`,
+`status_labels`, `language`, `preview`, `[project_dirs]`).
 
 ## Usage
 
@@ -142,6 +145,7 @@ description = "Close other tabs"
 | `l` | Edit the card's phase labels (space ticks, enter applies) |
 | `c` | Open the companion session beside the board, or jump to it |
 | `p` | Turn the session preview off / on |
+| `h` | Reveal the label-hidden cards (dimmed) / hide them again |
 | `q` | Quit |
 
 Cards can also be dragged between columns with the mouse; drops are staged the

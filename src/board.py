@@ -7,6 +7,8 @@
 - Three status-category columns (To Do / In Progress / Done); inside a group,
   cards rank by the config's priority ladder (`board_priority`: parent epic ×
   Jira priority, first matching rule wins) and wear a P1/P2/… marker
+- Cards carrying an `exclude_labels` label stay off the board, but not out of
+  sight: the column title counts them and `h` reveals them dimmed, in place
 - Move cards between columns via drag & drop or arrow keys (runs Jira transitions);
   config-declared label changes (`status_labels`) apply when a transition lands
 - Enter launches a Claude session for the focused card in a new herdr tab
@@ -152,6 +154,14 @@ MESSAGES: dict[str, dict[str, str]] = {
                      "ja": "{key}: セッションへ移動できません: {error}"},
     "preview_title": {"en": "{key} — last reply", "ja": "{key} の最後の返答"},
     "toggle_preview": {"en": "Preview on / off", "ja": "返答プレビュー 表示/非表示"},
+    "toggle_hidden": {"en": "Hidden cards on / off", "ja": "非表示カードの表示/非表示"},
+    "hidden_count": {"en": "({n} hidden)", "ja": "(非表示 {n})"},
+    "hidden_shown": {"en": "Showing the hidden cards", "ja": "非表示カードを表示します"},
+    "hidden_hidden": {"en": "Hidden cards tucked away again", "ja": "非表示カードを隠しました"},
+    "no_exclude_labels": {
+        "en": "No labels are hidden; add `exclude_labels` to config.toml.",
+        "ja": "非表示ラベルが未設定です。config.toml に `exclude_labels` を追加してください。",
+    },
     "preview_enabled": {"en": "Session preview on", "ja": "返答プレビューを表示します"},
     "preview_disabled": {"en": "Session preview off", "ja": "返答プレビューを隠しました"},
     "launch_failed": {"en": "Failed to launch session: {error}", "ja": "セッション起動失敗: {error}"},
@@ -353,6 +363,7 @@ class Config:
     jql: str
     exclude_statuses: list[str] = field(default_factory=list)
     exclude_issuetypes: list[str] = field(default_factory=list)
+    exclude_labels: list[str] = field(default_factory=list)
     status_order: list[str] = field(default_factory=list)
     phase_labels: list[PhaseLabel] = field(default_factory=list)
     status_labels: list[StatusLabelRule] = field(default_factory=list)
@@ -383,6 +394,7 @@ class Config:
             ),
             exclude_statuses=raw.get("exclude_statuses", []),
             exclude_issuetypes=raw.get("exclude_issuetypes", []),
+            exclude_labels=raw.get("exclude_labels", []),
             status_order=raw.get("status_order", []),
             phase_labels=[p for p in map(PhaseLabel.parse, raw.get("phase_labels", []))
                           if p is not None],
@@ -560,6 +572,18 @@ def exclude_by_issuetype(issues: list[Issue], excluded: list[str]) -> list[Issue
         return issues
     drop = {name.casefold() for name in excluded}
     return [i for i in issues if i.issuetype.casefold() not in drop]
+
+
+def hidden_by_label(issue: Issue, excluded: list[str]) -> bool:
+    """Whether the issue carries a label listed in `exclude_labels`.
+
+    Unlike the status and issue-type exclusions this is not applied in the
+    search: the board keeps the hidden issues so it can say how many there are
+    (in the column title) and reveal them on demand (`h`) — a card marked
+    "won't do" should disappear without becoming impossible to notice.
+    """
+    drop = {name.casefold() for name in excluded}
+    return any(name.casefold() in drop for name in issue.labels)
 
 
 # Block-level ADF nodes end the line they produced; everything else is inline.
@@ -1218,7 +1242,13 @@ class Column(VerticalScroll):
     def __init__(self, category: str, title: str):
         super().__init__(classes="column")
         self.category = category
+        self.title = title
         self.border_title = title
+
+    def show_hidden_count(self, count: int) -> None:
+        """Keep the hidden cards noticeable: their number stays in the title."""
+        self.border_title = (f"{self.title} [dim]{t('hidden_count', n=count)}[/]"
+                             if count else self.title)
 
 
 class Preview(VerticalScroll, can_focus=False):
@@ -1321,6 +1351,7 @@ class BoardApp(App):
     Card:focus { border: round $accent; }
     Card.dragging { opacity: 0.6; }
     Card.pending { border: round $warning; }
+    Card.hidden-card { opacity: 0.5; }
     .status-divider { margin-bottom: 1; text-align: center; }
     Preview { display: none; height: auto; max-height: 12; border: round $primary;
               margin: 0 1; padding: 0 1; }
@@ -1337,6 +1368,7 @@ class BoardApp(App):
         Binding("l", "phase_label", t("phase_label")),
         Binding("c", "companion", t("companion")),
         Binding("p", "toggle_preview", t("toggle_preview")),
+        Binding("h", "toggle_hidden", t("toggle_hidden")),
         Binding("down", "focus_next", t("next_card"), show=False),
         Binding("up", "focus_previous", t("prev_card"), show=False),
         Binding("q", "quit", t("quit")),
@@ -1351,6 +1383,10 @@ class BoardApp(App):
         # `p` overrides the config default for the rest of the session, so a
         # config reload must not reach back in and undo it.
         self.preview_enabled = self.cfg.preview
+        # The last search result, kept so `h` can re-lay the board out without
+        # asking Jira again. False on start: hidden cards stay hidden.
+        self.issues: list[Issue] = []
+        self.show_hidden = False
         self._launching: set[str] = set()
         self._moving = False
         self._opening_companion = False
@@ -1412,9 +1448,15 @@ class BoardApp(App):
         self.call_from_thread(self.populate, issues)
 
     def populate(self, issues: list[Issue]) -> None:
+        self.issues = issues
         for col in self.query(Column):
             col.remove_children()
             column_issues = [i for i in issues if i.category == col.category]
+            hidden = {i.key for i in column_issues
+                      if hidden_by_label(i, self.cfg.exclude_labels)}
+            col.show_hidden_count(len(hidden))
+            if not self.show_hidden:
+                column_issues = [i for i in column_issues if i.key not in hidden]
             groups = group_by_status(column_issues, self.cfg.status_order)
             for status, group in groups:
                 # The divider only earns its line when the column actually
@@ -1422,11 +1464,27 @@ class BoardApp(App):
                 if len(groups) > 1:
                     col.mount(StatusDivider(status))
                 for issue in sort_cards(group, self.cfg):
-                    col.mount(Card(issue, self.cfg.phase_labels,
-                                   board_priority_tag(self.cfg, issue)))
+                    card = Card(issue, self.cfg.phase_labels,
+                                board_priority_tag(self.cfg, issue))
+                    if issue.key in hidden:
+                        card.add_class("hidden-card")
+                    col.mount(card)
         if (first := next(iter(self.query(Card)), None)) is not None:
             first.focus()
         self.update_badges()
+
+    def action_toggle_hidden(self) -> None:
+        """Reveal the label-hidden cards (dimmed, in place), and tuck them away.
+
+        The column titles carry their count either way, so the hidden cards
+        stay noticeable without being on the board.
+        """
+        if not self.cfg.exclude_labels:
+            self.notify(t("no_exclude_labels"), severity="warning")
+            return
+        self.show_hidden = not self.show_hidden
+        self.populate(self.issues)
+        self.notify(t("hidden_shown" if self.show_hidden else "hidden_hidden"))
 
     @work(thread=True, exclusive=True, group="badges")
     def update_badges(self) -> None:
@@ -1842,10 +1900,16 @@ def dump_text(cfg: Config, issues: list[Issue], statuses: dict[str, str],
               sessions: dict[str, str]) -> str:
     """The board as plain text, for reading outside the TUI (`--dump`)."""
     lines = [f"JQL: {cfg.jql}", f"exclude_statuses: {cfg.exclude_statuses}",
-             f"exclude_issuetypes: {cfg.exclude_issuetypes}"]
+             f"exclude_issuetypes: {cfg.exclude_issuetypes}",
+             f"exclude_labels: {cfg.exclude_labels}"]
     for cat, title in CATEGORY_COLUMNS:
         column = [i for i in issues if i.category == cat]
-        lines.append(f"\n== {title} ({len(column)}) ==")
+        # Like the TUI: label-hidden issues are left out but stay countable
+        # (their keys are in the JSON dump).
+        hidden = [i for i in column if hidden_by_label(i, cfg.exclude_labels)]
+        column = [i for i in column if i not in hidden]
+        suffix = f", hidden {len(hidden)}" if hidden else ""
+        lines.append(f"\n== {title} ({len(column)}{suffix}) ==")
         for issue in column:
             prio = f" {label}" if (label := board_priority_label(cfg, issue)) else ""
             badge = f" <{status}>" if (status := badge_of(issue, statuses, sessions)) else ""
@@ -1871,12 +1935,14 @@ def dump_json(cfg: Config, issues: list[Issue], statuses: dict[str, str],
                      "priority": i.priority or None,
                      "epic": {"key": i.epic_key, "name": i.epic_name} if i.epic_key else None,
                      "board_priority": board_priority_label(cfg, i) or None,
+                     "hidden": hidden_by_label(i, cfg.exclude_labels),
                      "url": f"{cfg.site}/browse/{i.key}"}
                     for i in issues if i.category == cat]}
         for cat, title in CATEGORY_COLUMNS
     ]
     return json.dumps({"jql": cfg.jql, "exclude_statuses": cfg.exclude_statuses,
                        "exclude_issuetypes": cfg.exclude_issuetypes,
+                       "exclude_labels": cfg.exclude_labels,
                        "columns": columns}, ensure_ascii=False, indent=1)
 
 
