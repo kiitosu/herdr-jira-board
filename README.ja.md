@@ -44,6 +44,9 @@ English version: [README.md](README.md)
   ステータスに着地したときのラベルの付け外しを自動化できます — レビューに入ったら
   「要効果確認」を付ける、完了に移ったらボードの管理ラベルを外す、など
   （[詳細](#ステータス連動ラベル)）
+- **非表示だが気づけるカード**（`exclude_labels`）: 指定ラベル（「やらない」等）の
+  付いたカードは盤面から消えますが、列タイトルに件数が残り、`h` でその場に
+  薄色表示して確認できます
 - `herdr agent list` を5秒ごとにポーリングし、カードにセッション状態バッジ
   (working / blocked / idle / done) を表示
 - カードに作成日と期限を表示（期限切れは赤、3日以内は黄）
@@ -87,8 +90,8 @@ api_token = "<API トークン>"
 ```
 
 すべてのオプション（`api_token_cmd`, `jql`, `exclude_statuses`,
-`exclude_issuetypes`, `status_order`, `phase_labels`, `board_priority`,
-`status_labels`, `language`, `preview`, `[project_dirs]`）は
+`exclude_issuetypes`, `exclude_labels`, `status_order`, `phase_labels`,
+`board_priority`, `status_labels`, `language`, `preview`, `[project_dirs]`）は
 `config.toml.example` のコメントを参照してください。
 
 ## 使い方
@@ -135,6 +138,7 @@ description = "他のタブを閉じる"
 | `l` | カードのフェーズラベルを編集（space で選択、enter で反映） |
 | `c` | 相棒セッションを隣に開く / そこへ移動 |
 | `p` | 返答プレビューの表示 / 非表示 |
+| `h` | ラベルで非表示にしたカードを薄色で表示 / 再び隠す |
 | `q` | 終了 |
 
 マウスでカードを列間ドラッグすることもできます（同様に仮移動 → `Enter` で確定）。

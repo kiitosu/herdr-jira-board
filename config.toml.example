@@ -33,6 +33,11 @@ api_token = ""
 # its children are. Applied on top of `jql`, like `exclude_statuses`.
 # exclude_issuetypes = ["Epic"]
 
+# Optional: labels that hide a card from the board ("won't do", say), compared
+# case-insensitively. Unlike the exclusions above the cards are not gone: the
+# column title counts them and `h` reveals them dimmed, in place.
+# exclude_labels = ["jb_wont_do"]
+
 # Optional: order of the status groups inside a column, compared
 # case-insensitively. A column that mixes several statuses (typically
 # In Progress) shows a divider per status; listed statuses come first in this

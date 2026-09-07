@@ -46,7 +46,12 @@ Once the user picks an issue from the board, use the MCP tools per issue key:
 - The board only shows issues assigned to the user: open ones, plus ones
   completed in the last 7 days.
 - A status listed in `exclude_statuses` (in the plugin's `config.toml`) never
-  appears. The dump prints that list on its second line, so say so explicitly
-  if a ticket the user expects is filtered out.
+  appears, and neither does an issue type listed in `exclude_issuetypes`. The
+  dump prints both lists in its header, so say so explicitly if a ticket the
+  user expects is filtered out.
+- Issues carrying an `exclude_labels` label ("won't do", say) are left out of
+  the text dump, but a column that has them says so — `== To Do (7, hidden 2)
+  ==`. `--json` includes them with `"hidden": true` when the user asks what
+  is hidden.
 - Due dates: overdue and due-soon issues are worth calling out unprompted when
   summarizing the board.
