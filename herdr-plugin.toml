@@ -19,6 +19,12 @@ command = ["bash", "-c", "exec herdr plugin pane open --plugin jira-board --entr
 contexts = ["workspace"]
 
 [[actions]]
+id = "open-issue"
+title = "Open the tab's Jira issue"
+command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/jira-board\" --open-tab-issue"]
+contexts = ["tab"]
+
+[[actions]]
 id = "close-other-tabs"
 title = "Close other tabs"
 command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/close-tabs\" other"]

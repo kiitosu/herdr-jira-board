@@ -52,7 +52,9 @@ English version: [README.md](README.md)
 - カードに作成日と期限を表示（期限切れは赤、3日以内は黄）
 - `bin/jira-board --dump` で同じ盤面を TUI なしのテキスト（または JSON）で出力。
   Claude Code から読ませるスキルも同梱 — [Claude からボードを読む](#claude-からボードを読む)
-- タブ整理アクション（他のタブを閉じる / 右側のタブを閉じる）付き
+- タブアクション: 今いるタブに対応する Jira 課題をブラウザで開けます —
+  完了して盤面から消えた・アサインが変わった・非表示にした後でも、セッションの
+  タブから課題へ辿れます。他のタブを閉じる / 右側のタブを閉じるも同梱
 - UI は英語 / 日本語対応 — システムロケールに追従し、設定で上書きも可能
 
 ## 必要なもの
@@ -122,7 +124,19 @@ key = "prefix+shift+x"
 type = "plugin_action"
 command = "jira-board.close-other-tabs"
 description = "他のタブを閉じる"
+
+[[keys.command]]
+key = "prefix+i"
+type = "plugin_action"
+command = "jira-board.open-issue"
+description = "タブの課題をブラウザで開く"
 ```
+
+`jira-board.open-issue` は、今いるタブに対応する Jira 課題をブラウザで開く
+タブアクションです（タブのアクションメニューからも実行できます）。課題キーは
+「ボードのセッション記録 → 起動時にタブへ注入された `JIRA_ISSUE_KEY` 環境変数 →
+タブラベル中の課題キー」の順で解決するため、課題が完了・アサイン変更・非表示で
+盤面から消えていても、ボード自体を閉じていても動きます。
 
 ### キー操作
 
