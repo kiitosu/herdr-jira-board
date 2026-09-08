@@ -51,6 +51,10 @@ session for any card — with live session status badges on the board.
 - **Hidden-but-noticeable cards** (`exclude_labels`): a card carrying a listed
   label ("won't do", say) leaves the board, but its column title keeps the
   count and `h` reveals the hidden cards dimmed, in place
+- **Session ghosts**: an issue that drops out of the JQL while its session tab
+  lives on — completed and aged off, reassigned — comes back as a dimmed card,
+  so `Enter` (go to the tab) and `o` (open in the browser) keep working; close
+  the tab and the ghost goes with it
 - Session status badges (working / blocked / idle / done) on each card,
   refreshed every 5 seconds via `herdr agent list`
 - Each card shows its created date and due date; overdue is red, due within
@@ -141,7 +145,9 @@ description = "Open the tab's Jira issue"
 ```
 
 `jira-board.open-issue` opens the Jira issue behind the current tab — any
-tab, from its action menu too. The key is taken from the board's session
+tab, also via `herdr plugin action invoke open-issue --plugin jira-board`
+(herdr's context menus list only built-ins, so a key binding or the CLI is
+how this action runs). The key is taken from the board's session
 records, from the `JIRA_ISSUE_KEY` a launch put into the tab's environment,
 or from an issue key in the tab label, in that order — so it still works when
 the issue has no card any more (completed and aged off, reassigned, hidden)

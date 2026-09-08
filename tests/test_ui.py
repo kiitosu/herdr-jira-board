@@ -78,7 +78,8 @@ async def test_initial_focus_and_columns(app):
         await wait_for_cards(app, pilot)
         cards = list(app.query(board.Card))
         assert [c.issue.key for c in cards] == ["KAN-1", "KAN-2"]
-        assert isinstance(app.focused, board.Card)
+        # The initial focus lands one refresh after the cards mount.
+        await wait_for(pilot, lambda: isinstance(app.focused, board.Card))
         assert app.focused.issue.key == "KAN-1"
         assert all(column_of(c).category == "new" for c in cards)
 
