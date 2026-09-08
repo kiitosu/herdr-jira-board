@@ -58,7 +58,10 @@ session for any card — with live session status badges on the board.
 - `bin/jira-board --dump` prints the same board as text (or JSON) without the
   TUI, and an optional Claude Code skill lets Claude read it — see
   [Reading the board from Claude](#reading-the-board-from-claude)
-- Tab utilities: actions to close other tabs / tabs to the right
+- Tab actions: open the Jira issue behind the current tab in the browser —
+  the session keeps pointing at its issue even after the card left the board
+  (completed and aged off, reassigned, hidden) — and close other tabs / tabs
+  to the right
 - UI in English or Japanese — follows your system locale, can be overridden
 
 ## Requirements
@@ -129,7 +132,20 @@ key = "prefix+shift+x"
 type = "plugin_action"
 command = "jira-board.close-other-tabs"
 description = "Close other tabs"
+
+[[keys.command]]
+key = "prefix+i"
+type = "plugin_action"
+command = "jira-board.open-issue"
+description = "Open the tab's Jira issue"
 ```
+
+`jira-board.open-issue` opens the Jira issue behind the current tab — any
+tab, from its action menu too. The key is taken from the board's session
+records, from the `JIRA_ISSUE_KEY` a launch put into the tab's environment,
+or from an issue key in the tab label, in that order — so it still works when
+the issue has no card any more (completed and aged off, reassigned, hidden)
+and when the board itself is closed.
 
 ### Keys
 

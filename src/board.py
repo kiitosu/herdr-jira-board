@@ -18,6 +18,8 @@
 - Previews the focused card's session — its last Claude reply, read straight
   from the transcript, so looking never costs the session a turn (`p` turns
   the preview off when the board should stay compact)
+- The `open-issue` tab action (--open-tab-issue) opens the issue behind any
+  session tab in the browser, even after its card left the board
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import asyncio
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -161,6 +164,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "no_exclude_labels": {
         "en": "No labels are hidden; add `exclude_labels` to config.toml.",
         "ja": "非表示ラベルが未設定です。config.toml に `exclude_labels` を追加してください。",
+    },
+    "no_issue_for_tab": {
+        "en": "No Jira issue found for this tab ({label}).",
+        "ja": "このタブに対応する Jira 課題が見つかりません（{label}）。",
     },
     "preview_enabled": {"en": "Session preview on", "ja": "返答プレビューを表示します"},
     "preview_disabled": {"en": "Session preview off", "ja": "返答プレビューを隠しました"},
@@ -1161,6 +1168,83 @@ def open_url(url: str) -> None:
     webbrowser.open(url)
 
 
+# ---------------------------------------------------------------- the open-issue action
+
+ISSUE_KEY_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
+
+
+def issue_key_from_pane_env(pane_id: str) -> str:
+    """JIRA_ISSUE_KEY from a pane's shell environment ("" when unreadable).
+
+    Launching a session puts the key into its tab's environment
+    (`tab create --env`), so every shell in the tab carries it. /proc makes it
+    readable on Linux; elsewhere this quietly yields nothing and the caller
+    falls back.
+    """
+    try:
+        info = herdr("pane", "process-info", "--pane", pane_id)
+        pid = int(find_key(info, "shell_pid"))
+        environ = Path(f"/proc/{pid}/environ").read_bytes()
+    except (subprocess.CalledProcessError, OSError, TypeError, ValueError):
+        return ""
+    for entry in environ.split(b"\0"):
+        if entry.startswith(b"JIRA_ISSUE_KEY="):
+            return entry.partition(b"=")[2].decode("utf-8", errors="replace")
+    return ""
+
+
+def issue_key_for_tab(tab_id: str, label: str, sessions: dict[str, str]) -> str:
+    """The issue behind a tab ("" when there is none to find).
+
+    The board's session records come first — they survive a tab rename. The
+    JIRA_ISSUE_KEY the launch left in the tab's environment comes second — it
+    survives a lost record. An issue key spotted in the label is the last
+    resort, and covers tabs the board never launched.
+    """
+    try:
+        panes = find_key(herdr("pane", "list"), "panes") or []
+    except (subprocess.CalledProcessError, OSError):
+        panes = []
+    in_tab = [str(p["pane_id"]) for p in panes
+              if isinstance(p, dict) and p.get("pane_id")
+              and tab_id and str(p.get("tab_id") or "") == tab_id]
+    for key, pane in sessions.items():
+        if pane in in_tab:
+            return key
+    for pane_id in in_tab:
+        if key := issue_key_from_pane_env(pane_id):
+            return key
+    if match := ISSUE_KEY_RE.search(strip_status_icon(label)):
+        return match.group()
+    return ""
+
+
+def open_tab_issue() -> int:
+    """Open the Jira issue behind the current tab (the `open-issue` action).
+
+    Runs outside the TUI: herdr invokes it from a tab's action menu, or from a
+    key bound to `jira-board.open-issue`, with the invocation context in
+    HERDR_PLUGIN_CONTEXT_JSON. The point is that it needs no card: it works
+    when the board is closed, and when the issue no longer appears on it at
+    all — completed and aged off, reassigned, or hidden.
+    """
+    cfg = Config.load()
+    try:
+        context = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
+    except ValueError:
+        context = {}
+    tab_id = str(context.get("tab_id") or "")
+    label = str(context.get("tab_label") or "")
+    key = issue_key_for_tab(tab_id, label, load_sessions())
+    if not key:
+        print(t("no_issue_for_tab", label=label or tab_id or "-"), file=sys.stderr)
+        return 1
+    url = f"{cfg.site}/browse/{key}"
+    open_url(url)
+    print(url)
+    return 0
+
+
 # ---------------------------------------------------------------- dates
 
 DUE_SOON_DAYS = 3
@@ -1951,6 +2035,8 @@ if __name__ == "__main__":
         Config.load()
         print("config OK")
         sys.exit(0)
+    if "--open-tab-issue" in sys.argv:
+        sys.exit(open_tab_issue())
     if "--dump" in sys.argv:
         cfg = Config.load()
         issues = Jira(cfg).search()
