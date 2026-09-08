@@ -20,6 +20,9 @@
   the preview off when the board should stay compact)
 - The `open-issue` tab action (--open-tab-issue) opens the issue behind any
   session tab in the browser, even after its card left the board
+- An issue that left the board while its session tab lives on comes back as a
+  dimmed ghost card, so Enter (go to the tab) and `o` keep working; the ghost
+  goes when the tab does
 """
 
 from __future__ import annotations
@@ -495,34 +498,46 @@ class Jira:
                      "X-Force-Accept-Language": "true"},
         )
 
+    ISSUE_FIELDS = ["summary", "status", "issuetype", "created", "duedate",
+                    "labels", "priority", "parent"]
+
+    @staticmethod
+    def _parse_issue(it: dict) -> Issue:
+        f = it["fields"]
+        parent = f.get("parent") or {}
+        return Issue(
+            key=it["key"],
+            summary=f.get("summary") or "",
+            status=f["status"]["name"],
+            category=f["status"]["statusCategory"]["key"],
+            issuetype=(f.get("issuetype") or {}).get("name", ""),
+            # created is a timestamp ("2026-08-13T20:53:14.000+0900"), duedate a plain date
+            created=(f.get("created") or "")[:10],
+            duedate=f.get("duedate") or None,
+            labels=list(f.get("labels") or []),
+            priority=(f.get("priority") or {}).get("name", ""),
+            epic_key=parent.get("key", ""),
+            epic_name=(parent.get("fields") or {}).get("summary", ""),
+        )
+
     def search(self) -> list[Issue]:
         r = self.http.post(
             "/rest/api/3/search/jql",
-            json={"jql": self.cfg.jql, "maxResults": 100,
-                  "fields": ["summary", "status", "issuetype", "created", "duedate",
-                             "labels", "priority", "parent"]},
+            json={"jql": self.cfg.jql, "maxResults": 100, "fields": self.ISSUE_FIELDS},
         )
         r.raise_for_status()
-        issues = []
-        for it in r.json().get("issues", []):
-            f = it["fields"]
-            parent = f.get("parent") or {}
-            issues.append(Issue(
-                key=it["key"],
-                summary=f.get("summary") or "",
-                status=f["status"]["name"],
-                category=f["status"]["statusCategory"]["key"],
-                issuetype=(f.get("issuetype") or {}).get("name", ""),
-                # created is a timestamp ("2026-08-13T20:53:14.000+0900"), duedate a plain date
-                created=(f.get("created") or "")[:10],
-                duedate=f.get("duedate") or None,
-                labels=list(f.get("labels") or []),
-                priority=(f.get("priority") or {}).get("name", ""),
-                epic_key=parent.get("key", ""),
-                epic_name=(parent.get("fields") or {}).get("summary", ""),
-            ))
+        issues = [self._parse_issue(it) for it in r.json().get("issues", [])]
         issues = exclude_by_status(issues, self.cfg.exclude_statuses)
         return exclude_by_issuetype(issues, self.cfg.exclude_issuetypes)
+
+    def issue(self, key: str) -> Issue | None:
+        """One issue by key, shaped like a search hit (None when it is gone)."""
+        r = self.http.get(f"/rest/api/3/issue/{key}",
+                          params={"fields": ",".join(self.ISSUE_FIELDS)})
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return self._parse_issue(r.json())
 
     def description(self, key: str) -> str:
         """The issue's description as plain text ("" when it has none)."""
@@ -579,6 +594,33 @@ def exclude_by_issuetype(issues: list[Issue], excluded: list[str]) -> list[Issue
         return issues
     drop = {name.casefold() for name in excluded}
     return [i for i in issues if i.issuetype.casefold() not in drop]
+
+
+def session_ghosts(issues: list[Issue], sessions: dict[str, str], jira: Jira) -> list[Issue]:
+    """Cards for issues that left the board while their session tab lives on.
+
+    An issue completes and ages off the JQL window, gets reassigned, or lands
+    in an excluded status — but its session keeps working in a tab. Without a
+    card there is no way back to the issue or its tab, so these come back as
+    dimmed "ghost" cards, fetched by key. A ghost lives exactly as long as its
+    pane: close the tab and the next refresh drops it. Never raises — a board
+    refresh must not fail over its extras.
+    """
+    try:
+        panes = find_key(herdr("pane", "list"), "panes") or []
+    except (subprocess.CalledProcessError, OSError):
+        return []
+    alive = {str(p.get("pane_id")) for p in panes if isinstance(p, dict)}
+    on_board = {i.key for i in issues}
+    ghosts = []
+    for key in sorted(k for k, pane in sessions.items()
+                      if k not in on_board and pane in alive):
+        try:
+            if issue := jira.issue(key):
+                ghosts.append(issue)
+        except Exception:  # noqa: BLE001 — one bad key must not take the rest down
+            continue
+    return ghosts
 
 
 def hidden_by_label(issue: Issue, excluded: list[str]) -> bool:
@@ -1352,6 +1394,8 @@ class StatusDivider(Static):
 
 
 class TransitionPicker(ModalScreen[str | None]):
+    # The app-level AUTO_FOCUS targets cards, which modal screens do not have.
+    AUTO_FOCUS = "OptionList"
     BINDINGS = [Binding("escape", "dismiss(None)", t("cancel"))]
 
     def __init__(self, issue: Issue, transitions: list[dict]):
@@ -1385,6 +1429,8 @@ class PhaseLabelPicker(ModalScreen["set[str] | None"]):
     several labels can go on and off in one trip to Jira instead of one each.
     """
 
+    # The app-level AUTO_FOCUS targets cards, which modal screens do not have.
+    AUTO_FOCUS = "OptionList"
     # OptionList binds enter (and, depending on the version, space) itself, so
     # these have to be priority bindings or the focused list swallows them.
     BINDINGS = [
@@ -1428,6 +1474,10 @@ class PhaseLabelPicker(ModalScreen["set[str] | None"]):
 
 class BoardApp(App):
     TITLE = "Jira Board"
+    # The default auto-focus takes the first focusable widget — a Column, not
+    # a card — and can land after populate() focused the first card, stealing
+    # it back. Cards are the only thing worth starting on.
+    AUTO_FOCUS = "Card"
     CSS = """
     Horizontal#columns { height: 1fr; }
     .column { width: 1fr; border: round $primary; margin: 0 1; padding: 0 1; }
@@ -1436,6 +1486,7 @@ class BoardApp(App):
     Card.dragging { opacity: 0.6; }
     Card.pending { border: round $warning; }
     Card.hidden-card { opacity: 0.5; }
+    Card.ghost-card { opacity: 0.5; border: round $surface; }
     .status-divider { margin-bottom: 1; text-align: center; }
     Preview { display: none; height: auto; max-height: 12; border: round $primary;
               margin: 0 1; padding: 0 1; }
@@ -1467,9 +1518,11 @@ class BoardApp(App):
         # `p` overrides the config default for the rest of the session, so a
         # config reload must not reach back in and undo it.
         self.preview_enabled = self.cfg.preview
-        # The last search result, kept so `h` can re-lay the board out without
-        # asking Jira again. False on start: hidden cards stay hidden.
+        # The last search result and its off-board session ghosts, kept so `h`
+        # can re-lay the board out without asking Jira again. False on start:
+        # hidden cards stay hidden.
         self.issues: list[Issue] = []
+        self.ghosts: list[Issue] = []
         self.show_hidden = False
         self._launching: set[str] = set()
         self._moving = False
@@ -1529,13 +1582,20 @@ class BoardApp(App):
         except Exception as e:  # noqa: BLE001
             self.call_from_thread(self.notify, t("fetch_failed", error=e), severity="error")
             return
-        self.call_from_thread(self.populate, issues)
+        ghosts = session_ghosts(issues, load_sessions(), self.jira)
+        self.call_from_thread(self.populate, issues, ghosts)
 
-    def populate(self, issues: list[Issue]) -> None:
+    def populate(self, issues: list[Issue], ghosts: list[Issue] | None = None) -> None:
+        """Lay the board out. With ghosts None the previous ones are kept, so
+        the `h` toggle can re-populate without refetching them."""
         self.issues = issues
+        if ghosts is not None:
+            self.ghosts = ghosts
+        ghost_keys = {i.key for i in self.ghosts}
+        all_issues = list(issues) + self.ghosts
         for col in self.query(Column):
             col.remove_children()
-            column_issues = [i for i in issues if i.category == col.category]
+            column_issues = [i for i in all_issues if i.category == col.category]
             hidden = {i.key for i in column_issues
                       if hidden_by_label(i, self.cfg.exclude_labels)}
             col.show_hidden_count(len(hidden))
@@ -1552,10 +1612,21 @@ class BoardApp(App):
                                 board_priority_tag(self.cfg, issue))
                     if issue.key in hidden:
                         card.add_class("hidden-card")
+                    if issue.key in ghost_keys:
+                        card.add_class("ghost-card")
                     col.mount(card)
+        self.focus_first_card()
+        # A focus set while the cards are still mounting is occasionally
+        # dropped, so settle it again once the refresh has run — without
+        # stealing a focus that did take.
+        self.call_after_refresh(self.focus_first_card, True)
+        self.update_badges()
+
+    def focus_first_card(self, only_if_unset: bool = False) -> None:
+        if only_if_unset and isinstance(self.focused, Card):
+            return
         if (first := next(iter(self.query(Card)), None)) is not None:
             first.focus()
-        self.update_badges()
 
     def action_toggle_hidden(self) -> None:
         """Reveal the label-hidden cards (dimmed, in place), and tuck them away.
