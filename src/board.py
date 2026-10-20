@@ -194,6 +194,27 @@ MESSAGES: dict[str, dict[str, str]] = {
                "この課題に関するやり取りが含まれている可能性があります。全部は読まず、"
                "まず {key} で grep して、該当する部分だけ読んで引き継いでください。"),
     },
+    "companion_role": {
+        "en": ("You are the companion session of the herdr jira-board.\n\n"
+               "The sessions the board launched from its cards are your first source on "
+               "what is happening with an issue. Asked how an issue stands, read those "
+               "sessions before reading Jira — Jira holds the result, they hold the "
+               "reasoning, and what is missing from a Jira description is usually in them.\n\n"
+               "- which issue has a session: {sessions_path} (issue key -> pane id)\n"
+               "- read one: herdr agent read <pane id> --lines 150\n"
+               "- which are still running: herdr agent list\n\n"
+               "Before answering that you cannot tell, or that there is not enough to go "
+               "on, check whether you read them."),
+        "ja": ("あなたは herdr jira-board の相棒セッションです。\n\n"
+               "ボードがカードから起動した各セッションが、課題の状況についての一次情報です。"
+               "課題の状況を問われたら、Jira より先にそれらのセッションを読んでください。"
+               "Jira にあるのは結果で、経緯はセッション側にあります。"
+               "Jira の説明に書かれていないことは、たいていセッションに残っています。\n\n"
+               "- どの課題にセッションがあるか: {sessions_path}（課題キー -> ペインID）\n"
+               "- 読む: herdr agent read <ペインID> --lines 150\n"
+               "- 動いているもの: herdr agent list\n\n"
+               "「判断できない」「材料が足りない」と答える前に、それらを読んだか確認してください。"),
+    },
     "companion": {"en": "Companion session", "ja": "相棒セッション"},
     "companion_opening": {"en": "Opening the companion session…",
                           "ja": "相棒セッションを開いています…"},
@@ -1025,16 +1046,21 @@ def open_companion() -> bool:
     if not pane_id:
         raise RuntimeError(t("no_pane_id", data=pane))
     name = f"companion-{str(pane_id).split(':')[-1].lower()}"
+    # The companion is never sent an opening prompt — it is where the user
+    # thinks out loud, so the board must not put words in it. Its role goes in
+    # the system prompt instead, where every turn reads it and a compaction
+    # cannot drop it.
+    role = ("--append-system-prompt", t("companion_role", sessions_path=SESSIONS_PATH))
     resumed = False
     try:
         if session_id := load_companion():
             try:
-                started = start_claude(str(pane_id), name, "--resume", session_id)
+                started = start_claude(str(pane_id), name, "--resume", session_id, *role)
                 resumed = True
             except subprocess.CalledProcessError:
-                started = start_claude(str(pane_id), name)
+                started = start_claude(str(pane_id), name, *role)
         else:
-            started = start_claude(str(pane_id), name)
+            started = start_claude(str(pane_id), name, *role)
     except subprocess.CalledProcessError as e:
         # Don't leave the empty pane behind on failure
         try:

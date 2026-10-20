@@ -84,7 +84,29 @@ def test_open_companion_resumes_the_recorded_session(monkeypatch, in_board_pane)
     board.save_companion("sess-old")
     assert board.open_companion() is True
     start = fake.agent_starts()[0]
-    assert start[-3:] == ["--", "--resume", "sess-old"]
+    assert start[start.index("--"):start.index("--append-system-prompt")] == [
+        "--", "--resume", "sess-old"]
+
+
+def test_open_companion_tells_the_session_what_it_is():
+    """The companion is never sent a prompt, so its role rides the system prompt."""
+    for starter in (lambda f: f.agent_starts()[0],):
+        fake = FakeHerdr()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("HERDR_PANE_ID", "w1:p8")
+            mp.setattr(board.subprocess, "run", fake)
+            board.open_companion()
+        start = starter(fake)
+        role = start[start.index("--append-system-prompt") + 1]
+        assert "jira-board" in role
+        assert str(board.SESSIONS_PATH) in role
+
+
+def test_the_role_names_the_command_that_reads_a_session():
+    """Naming the path alone would leave the session to guess how to read it."""
+    role = board.t("companion_role", sessions_path=board.SESSIONS_PATH)
+    assert "herdr agent read" in role
+    assert "herdr agent list" in role
 
 
 def test_open_companion_starts_fresh_when_the_resume_fails(monkeypatch, in_board_pane):
