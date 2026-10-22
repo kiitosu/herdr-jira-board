@@ -16,6 +16,7 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(board, "SESSIONS_PATH", state / "sessions.json")
     monkeypatch.setattr(board, "CLAUDE_SESSIONS_PATH", state / "claude_sessions.json")
     monkeypatch.setattr(board, "COMPANION_PATH", state / "companion.json")
+    monkeypatch.setattr(board, "COMPANION_ROLE_PATH", state / "companion_role.md")
 
 
 @pytest.fixture(autouse=True)

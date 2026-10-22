@@ -70,6 +70,7 @@ STATE_DIR = Path(os.environ.get("HERDR_PLUGIN_STATE_DIR") or Path.home() / ".loc
 SESSIONS_PATH = STATE_DIR / "sessions.json"
 CLAUDE_SESSIONS_PATH = STATE_DIR / "claude_sessions.json"
 COMPANION_PATH = STATE_DIR / "companion.json"
+COMPANION_ROLE_PATH = STATE_DIR / "companion_role.md"
 
 
 # ---------------------------------------------------------------- i18n
@@ -1049,8 +1050,12 @@ def open_companion() -> bool:
     # The companion is never sent an opening prompt — it is where the user
     # thinks out loud, so the board must not put words in it. Its role goes in
     # the system prompt instead, where every turn reads it and a compaction
-    # cannot drop it.
-    role = ("--append-system-prompt", t("companion_role", sessions_path=SESSIONS_PATH))
+    # cannot drop it. It goes through a file: herdr agent start types the command
+    # into the pane's shell and refuses arguments it cannot encode safely there,
+    # such as the role's line breaks.
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    COMPANION_ROLE_PATH.write_text(t("companion_role", sessions_path=SESSIONS_PATH))
+    role = ("--append-system-prompt-file", str(COMPANION_ROLE_PATH))
     resumed = False
     try:
         if session_id := load_companion():
