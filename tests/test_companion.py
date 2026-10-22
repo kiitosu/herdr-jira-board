@@ -84,7 +84,7 @@ def test_open_companion_resumes_the_recorded_session(monkeypatch, in_board_pane)
     board.save_companion("sess-old")
     assert board.open_companion() is True
     start = fake.agent_starts()[0]
-    assert start[start.index("--"):start.index("--append-system-prompt")] == [
+    assert start[start.index("--"):start.index("--append-system-prompt-file")] == [
         "--", "--resume", "sess-old"]
 
 
@@ -97,9 +97,21 @@ def test_open_companion_tells_the_session_what_it_is():
             mp.setattr(board.subprocess, "run", fake)
             board.open_companion()
         start = starter(fake)
-        role = start[start.index("--append-system-prompt") + 1]
+        role = board.Path(start[start.index("--append-system-prompt-file") + 1]).read_text()
         assert "jira-board" in role
         assert str(board.SESSIONS_PATH) in role
+
+
+def test_open_companion_passes_no_line_break_to_agent_start(monkeypatch, in_board_pane):
+    """herdr agent start types its arguments into the shell and refuses line breaks.
+
+    The role spans several lines, so it must reach Claude through a file.
+    """
+    fake = FakeHerdr()
+    monkeypatch.setattr(board.subprocess, "run", fake)
+    board.open_companion()
+    start = fake.agent_starts()[0]
+    assert not any("\n" in arg for arg in start)
 
 
 def test_the_role_names_the_command_that_reads_a_session():
