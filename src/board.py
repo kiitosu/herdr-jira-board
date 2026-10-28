@@ -205,7 +205,11 @@ MESSAGES: dict[str, dict[str, str]] = {
                "- read one: herdr agent read <pane id> --lines 150\n"
                "- which are still running: herdr agent list\n\n"
                "Before answering that you cannot tell, or that there is not enough to go "
-               "on, check whether you read them."),
+               "on, check whether you read them.\n\n"
+               "Having looked something up, end the turn by saying in text whether it has "
+               "changed from what you last concluded. Fetching the value is not the end of "
+               "the work. If it has changed, carry it through to updating the state there "
+               "and then."),
         "ja": ("あなたは herdr jira-board の相棒セッションです。\n\n"
                "ボードがカードから起動した各セッションが、課題の状況についての一次情報です。"
                "課題の状況を問われたら、Jira より先にそれらのセッションを読んでください。"
@@ -214,7 +218,10 @@ MESSAGES: dict[str, dict[str, str]] = {
                "- どの課題にセッションがあるか: {sessions_path}（課題キー -> ペインID）\n"
                "- 読む: herdr agent read <ペインID> --lines 150\n"
                "- 動いているもの: herdr agent list\n\n"
-               "「判断できない」「材料が足りない」と答える前に、それらを読んだか確認してください。"),
+               "「判断できない」「材料が足りない」と答える前に、それらを読んだか確認してください。\n\n"
+               "状況を調べたら、取得した値を前回の結論と突き合わせ、変わったかどうかを"
+               "必ずテキストで述べてからターンを終えてください。値を取得しただけで"
+               "終えないでください。変化があれば、その場で状態の更新まで行ってください。"),
     },
     "companion": {"en": "Companion session", "ja": "相棒セッション"},
     "companion_opening": {"en": "Opening the companion session…",
