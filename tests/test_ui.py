@@ -118,6 +118,48 @@ async def test_a_staged_card_goes_above_the_target_columns_dividers(app, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_x_closes_the_tabs_of_done_issues_once_confirmed(app, monkeypatch):
+    done = board.Issue(key="KAN-3", summary="shipped", status="Done",
+                       category="done", issuetype="Task")
+    monkeypatch.setattr(board.Jira, "search", lambda self: [*ISSUES, done])
+    replies = {"tab": {"result": {"tabs": [
+                   {"tab_id": "w1:t1", "label": "KAN-3 shipped", "workspace_id": "w1"},
+                   {"tab_id": "w1:t2", "label": "KAN-1 first", "workspace_id": "w1"}]}},
+               "pane": {"result": {"panes": []}}}
+    monkeypatch.setattr(board, "herdr", lambda *args: replies[args[0]])
+    closed = []
+
+    def close_tabs(tab_ids):
+        closed.extend(tab_ids)
+        return len(tab_ids)
+
+    monkeypatch.setattr(board, "close_tabs", close_tabs)
+    async with app.run_test() as pilot:
+        await wait_for_cards(app, pilot)
+        await pilot.press("x")
+        await wait_for(pilot, lambda: isinstance(app.screen, board.CloseTabsConfirm))
+        await pilot.press("enter")
+        await wait_for(pilot, lambda: closed)
+        # Only the done issue's tab. KAN-1 is still open, and so is its tab.
+        assert closed == ["w1:t1"]
+
+
+@pytest.mark.asyncio
+async def test_x_asks_nothing_when_no_issue_is_done(app, monkeypatch):
+    replies = {"tab": {"result": {"tabs": [
+                   {"tab_id": "w1:t2", "label": "KAN-1 first", "workspace_id": "w1"}]}},
+               "pane": {"result": {"panes": []}}}
+    monkeypatch.setattr(board, "herdr", lambda *args: replies[args[0]])
+    monkeypatch.setattr(board, "close_tabs",
+                        lambda tab_ids: pytest.fail("nothing should close"))
+    async with app.run_test() as pilot:
+        await wait_for_cards(app, pilot)
+        await pilot.press("x")
+        await pilot.pause()
+        assert not isinstance(app.screen, board.CloseTabsConfirm)
+
+
+@pytest.mark.asyncio
 async def test_confirm_runs_single_transition(app, monkeypatch):
     transitions = [{"id": "41", "name": "Done",
                     "to": {"name": "Done", "statusCategory": {"key": "done"}}}]
