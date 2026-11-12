@@ -101,6 +101,23 @@ async def test_stage_move_and_cancel(app):
 
 
 @pytest.mark.asyncio
+async def test_a_staged_card_goes_above_the_target_columns_dividers(app, monkeypatch):
+    """The card the user just moved stays in sight, over every divider."""
+    working = board.Issue(key="KAN-9", summary="working", status="進行中",
+                          category="indeterminate", issuetype="Task")
+    monkeypatch.setattr(board.Jira, "search", lambda self: [*ISSUES, working])
+    async with app.run_test() as pilot:
+        await wait_for_cards(app, pilot)
+        await pilot.press("right")
+        await pilot.pause()
+        card = next(c for c in app.query(board.Card) if c.issue.key == "KAN-1")
+        column = column_of(card)
+        assert column.category == "indeterminate"
+        assert column.children[0] is card
+        assert isinstance(column.children[1], board.StatusDivider)
+
+
+@pytest.mark.asyncio
 async def test_confirm_runs_single_transition(app, monkeypatch):
     transitions = [{"id": "41", "name": "Done",
                     "to": {"name": "Done", "statusCategory": {"key": "done"}}}]
