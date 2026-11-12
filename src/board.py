@@ -23,6 +23,8 @@
 - An issue that left the board while its session tab lives on comes back as a
   dimmed ghost card, so Enter (go to the tab) and `o` keep working; the ghost
   goes when the tab does
+- `x` closes the tabs whose issue is done, after naming them: the sessions in
+  them end with the tab, so the list goes up before anything closes
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ import sys
 import time
 import tomllib
 import webbrowser
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -105,6 +108,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     "prev_card": {"en": "Previous card", "ja": "前のカード"},
     "quit": {"en": "Quit", "ja": "終了"},
     "pending_hint": {"en": "⏎ confirm / Esc cancel", "ja": "⏎確定 / Esc取消"},
+    "close_done_tabs": {"en": "Close done issues' tabs", "ja": "完了した課題のタブを閉じる"},
+    "no_done_tabs": {"en": "No tab belongs to a done issue",
+                     "ja": "完了した課題のタブはありません"},
+    "confirm_close_tabs": {
+        "en": "Close these tabs? The sessions running in them end with the tab.",
+        "ja": "これらのタブを閉じますか。タブの中で動いているセッションも終わります。"},
+    "closed_tabs": {"en": "Closed {ok}/{total} tabs", "ja": "{total} 個中 {ok} 個のタブを閉じました"},
     "created_label": {"en": "created", "ja": "作成"},
     "due_label": {"en": "due", "ja": "期限"},
     "pick_transition": {"en": "Select a transition for [b]{key}[/b]:",
@@ -1282,18 +1292,23 @@ def issue_key_from_pane_env(pane_id: str) -> str:
     return ""
 
 
-def issue_key_for_tab(tab_id: str, label: str, sessions: dict[str, str]) -> str:
+def issue_key_for_tab(tab_id: str, label: str, sessions: dict[str, str],
+                      panes: list | None = None) -> str:
     """The issue behind a tab ("" when there is none to find).
 
     The board's session records come first — they survive a tab rename. The
     JIRA_ISSUE_KEY the launch left in the tab's environment comes second — it
     survives a lost record. An issue key spotted in the label is the last
     resort, and covers tabs the board never launched.
+
+    `panes` is the pane list to read; asking tab by tab would run `pane list`
+    once per tab, so a caller walking every tab fetches it once and passes it.
     """
-    try:
-        panes = find_key(herdr("pane", "list"), "panes") or []
-    except (subprocess.CalledProcessError, OSError):
-        panes = []
+    if panes is None:
+        try:
+            panes = find_key(herdr("pane", "list"), "panes") or []
+        except (subprocess.CalledProcessError, OSError):
+            panes = []
     in_tab = [str(p["pane_id"]) for p in panes
               if isinstance(p, dict) and p.get("pane_id")
               and tab_id and str(p.get("tab_id") or "") == tab_id]
@@ -1306,6 +1321,42 @@ def issue_key_for_tab(tab_id: str, label: str, sessions: dict[str, str]) -> str:
     if match := ISSUE_KEY_RE.search(strip_status_icon(label)):
         return match.group()
     return ""
+
+
+def done_issue_tabs(tabs: list, sessions: dict[str, str], panes: list,
+                    category_of: Callable[[str], str | None],
+                    workspace: str = "", skip_tab: str = "") -> list[tuple[str, str]]:
+    """(tab_id, issue key) for the tabs whose issue is done.
+
+    A tab with no issue behind it is left alone, and so is one whose issue
+    cannot be read: closing a tab ends the session inside it, so everything
+    that is not plainly done stays open.
+    """
+    rows = []
+    for tab in tabs:
+        if not isinstance(tab, dict) or not tab.get("tab_id"):
+            continue
+        tab_id = str(tab["tab_id"])
+        if tab_id == skip_tab:
+            continue
+        if workspace and str(tab.get("workspace_id") or tab_id.split(":")[0]) != workspace:
+            continue
+        key = issue_key_for_tab(tab_id, str(tab.get("label") or ""), sessions, panes)
+        if key and category_of(key) == "done":
+            rows.append((tab_id, key))
+    return rows
+
+
+def close_tabs(tab_ids: list[str]) -> int:
+    """Close each tab, and say how many went. One failure does not stop the rest."""
+    closed = 0
+    for tab_id in tab_ids:
+        try:
+            herdr("tab", "close", tab_id)
+            closed += 1
+        except (subprocess.CalledProcessError, OSError):
+            pass
+    return closed
 
 
 def open_tab_issue() -> int:
@@ -1535,6 +1586,30 @@ class PhaseLabelPicker(ModalScreen["set[str] | None"]):
         self.dismiss(self.ticked)
 
 
+class CloseTabsConfirm(ModalScreen["bool | None"]):
+    """Name the tabs about to close and wait for Enter.
+
+    Closing a tab ends the session running in it, so the list goes up before
+    anything closes — a done issue can still have work in flight beside it.
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss(None)", t("cancel")),
+        Binding("enter", "dismiss(True)", t("confirm_close_tabs"), priority=True),
+    ]
+
+    def __init__(self, rows: list[tuple[str, str]]):
+        super().__init__()
+        self.rows = rows
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="picker"):
+            yield Static(t("confirm_close_tabs"))
+            for _, key in self.rows:
+                yield Static(f"  [b]{key}[/b]")
+            yield Static(f"[yellow]{t('pending_hint')}[/]")
+
+
 # ---------------------------------------------------------------- app
 
 class BoardApp(App):
@@ -1569,6 +1644,7 @@ class BoardApp(App):
         Binding("c", "companion", t("companion")),
         Binding("p", "toggle_preview", t("toggle_preview")),
         Binding("h", "toggle_hidden", t("toggle_hidden")),
+        Binding("x", "close_done_tabs", t("close_done_tabs")),
         Binding("down", "focus_next", t("next_card"), show=False),
         Binding("up", "focus_previous", t("prev_card"), show=False),
         Binding("q", "quit", t("quit")),
@@ -1706,6 +1782,45 @@ class BoardApp(App):
         self.show_hidden = not self.show_hidden
         self.populate(self.issues)
         self.notify(t("hidden_shown" if self.show_hidden else "hidden_hidden"))
+
+    def done_tab_rows(self) -> list[tuple[str, str]]:
+        """The tabs of done issues, in the board's workspace. Blocks: herdr + Jira."""
+        try:
+            tabs = find_key(herdr("tab", "list"), "tabs") or []
+            panes = find_key(herdr("pane", "list"), "panes") or []
+        except (subprocess.CalledProcessError, OSError):
+            return []
+        # The board already knows the issues it drew, ghosts included; only a
+        # tab whose issue left the board entirely costs a request.
+        known: dict[str, str | None] = {i.key: i.category
+                                        for i in [*self.issues, *self.ghosts]}
+
+        def category_of(key: str) -> str | None:
+            if key not in known:
+                try:
+                    issue = self.jira.issue(key)
+                except Exception:  # noqa: BLE001
+                    issue = None
+                known[key] = issue.category if issue else None
+            return known[key]
+
+        board_tab = os.environ.get("HERDR_TAB_ID") or ""
+        return done_issue_tabs(tabs, self.sessions, panes, category_of,
+                               workspace=board_tab.split(":")[0], skip_tab=board_tab)
+
+    @work(group="close-tabs")
+    async def action_close_done_tabs(self) -> None:
+        """Close the tabs whose issue is done, once the user has seen the list."""
+        rows = await asyncio.to_thread(self.done_tab_rows)
+        if not rows:
+            self.notify(t("no_done_tabs"))
+            return
+        if not await self.push_screen_wait(CloseTabsConfirm(rows)):
+            return
+        closed = await asyncio.to_thread(close_tabs, [tab_id for tab_id, _ in rows])
+        self.notify(t("closed_tabs", ok=closed, total=len(rows)))
+        # The ghosts of the closed tabs go with them.
+        self.action_refresh()
 
     @work(thread=True, exclusive=True, group="badges")
     def update_badges(self) -> None:

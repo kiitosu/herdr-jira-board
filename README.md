@@ -173,6 +173,7 @@ and when the board itself is closed.
 | `c` | Open the companion session beside the board, or jump to it |
 | `p` | Turn the session preview off / on |
 | `h` | Reveal the label-hidden cards (dimmed) / hide them again |
+| `x` | Close the tabs whose issue is done (names them first; `Enter` closes, `Esc` cancels) |
 | `q` | Quit |
 
 Cards can also be dragged between columns with the mouse; drops are staged the
