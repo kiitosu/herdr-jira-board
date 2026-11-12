@@ -766,14 +766,18 @@ def sort_cards(issues: list[Issue], cfg: Config) -> list[Issue]:
     """The order cards take inside one status group.
 
     Board priority first — it answers "which of these do I pick up" — then the
-    phase labels, and the JQL order settles the rest (the sort is stable).
+    phase labels, then the due date with the nearest on top and the cards
+    without one last, and the JQL order settles the rest (the sort is stable).
     Sorting rather than grouping keeps this independent of `status_order`: the
     status groups stay as they are and only the cards inside one reorder.
     """
-    def key(issue: Issue) -> tuple[int, int]:
+    def key(issue: Issue) -> tuple[int, int, str]:
         rank = board_priority_rank(cfg, issue)
+        # ISO dates sort as text, and "~" is above every digit in ASCII, so an
+        # issue with no due date lands after every dated one.
         return (len(cfg.board_priority) if rank is None else rank,
-                phase_rank(issue, cfg.phase_labels))
+                phase_rank(issue, cfg.phase_labels),
+                issue.duedate or "~")
 
     return sorted(issues, key=key)
 
