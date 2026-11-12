@@ -1803,7 +1803,10 @@ class BoardApp(App):
 
     def stage_move(self, card: Card, target_category: str) -> None:
         # Staged moves accumulate: cards are moved one at a time and confirmed together.
-        self.mount_card_in(card, target_category)
+        # The card goes above the column's first divider: its status has not
+        # changed yet, so it belongs under none of them, and the top is where
+        # the user can still see what they just moved.
+        self.mount_card_in(card, target_category, at_top=True)
         card.pending_target = target_category
         card.add_class("pending")
         card.render_card()
@@ -1829,7 +1832,7 @@ class BoardApp(App):
             self.set_focus(None)
             self.refresh_preview()
 
-    def mount_card_in(self, card: Card, category: str) -> None:
+    def mount_card_in(self, card: Card, category: str, at_top: bool = False) -> None:
         column = next(c for c in self.query(Column) if c.category == category)
         # Only the card the user is on keeps the focus; re-mounting the others
         # (confirming or cancelling several staged moves) must not steal it.
@@ -1837,7 +1840,8 @@ class BoardApp(App):
 
         async def _move() -> None:
             await card.remove()
-            await column.mount(card)
+            # `before` needs a child to sit in front of; an empty column has none.
+            await column.mount(card, before=0 if at_top and column.children else None)
             if had_focus:
                 card.focus()
 
