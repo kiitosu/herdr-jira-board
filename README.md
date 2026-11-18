@@ -173,6 +173,12 @@ and when the board itself is closed.
 | `c` | Open the companion session beside the board, or jump to it |
 | `p` | Turn the session preview off / on |
 | `h` | Reveal the label-hidden cards (dimmed) / hide them again |
+| `L` | Take the issues' own Jira labels off the cards, and put them all back |
+| `?` | List every key in a panel — the footer is one line and drops the last ones on a narrow board |
+| `Shift`+`←` `→` | Slide the footer along to read the keys past its right edge |
+
+The `‹` `›` at the footer's ends slide it too, and so does the mouse wheel
+anywhere over it.
 | `x` | Close the tabs whose issue is done (names them first; `Enter` closes, `Esc` cancels) |
 | `q` | Quit |
 

@@ -25,6 +25,9 @@
   goes when the tab does
 - `x` closes the tabs whose issue is done, after naming them: the sessions in
   them end with the tab, so the list goes up before anything closes
+- Cards wear the issue's own Jira labels (`MINT_Ph2`, …) as chips, each in its
+  own colour from Jira's lozenge palette; `L` takes the lot off and puts them
+  back
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ import sys
 import time
 import tomllib
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -52,7 +55,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, OptionList, Static
+from textual.widgets import Footer, Header, HelpPanel, OptionList, Static
 from textual.widgets.option_list import Option
 
 def resolve_config_path() -> Path:
@@ -172,6 +175,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "preview_title": {"en": "{key} — last reply", "ja": "{key} の最後の返答"},
     "toggle_preview": {"en": "Preview on / off", "ja": "返答プレビュー 表示/非表示"},
     "toggle_hidden": {"en": "Hidden cards on / off", "ja": "非表示カードの表示/非表示"},
+    "toggle_labels": {"en": "Issue labels on / off", "ja": "課題ラベルの表示/非表示"},
+    "show_keys": {"en": "All keys", "ja": "キー一覧"},
+    "footer_right": {"en": "Footer right", "ja": "フッターを右へ"},
+    "footer_left": {"en": "Footer left", "ja": "フッターを左へ"},
+    "labels_shown": {"en": "Showing the issue labels", "ja": "課題ラベルを表示します"},
+    "labels_hidden": {"en": "Issue labels hidden", "ja": "課題ラベルを隠しました"},
     "hidden_count": {"en": "({n} hidden)", "ja": "(非表示 {n})"},
     "hidden_shown": {"en": "Showing the hidden cards", "ja": "非表示カードを表示します"},
     "hidden_hidden": {"en": "Hidden cards tucked away again", "ja": "非表示カードを隠しました"},
@@ -753,6 +762,34 @@ def board_priority_rank(cfg: Config, issue: Issue) -> int | None:
 # then nothing special — the same escalation the due dates use.
 PRIORITY_TAG_STYLES = ("red", "red", "yellow", "yellow")
 
+# Jira's bold lozenge colours, not its subtle ones: the pale backgrounds are
+# hard to tell from each other across a column, and telling them apart is the
+# whole point of colouring a label. Eight, so a board rarely wraps round.
+LABEL_STYLES = (
+    "#FFFFFF on #0052CC",  # blue
+    "#FFFFFF on #DE350B",  # red
+    "#FFFFFF on #00875A",  # green
+    "#172B4D on #FFAB00",  # yellow
+    "#FFFFFF on #5243AA",  # purple
+    "#FFFFFF on #00A3BF",  # teal
+    "#172B4D on #FF991F",  # orange
+    "#FFFFFF on #42526E",  # grey
+)
+
+
+def label_styles(names: Iterable[str]) -> dict[str, str]:
+    """A colour per label, handed out so the labels on one board differ.
+
+    Jira gives a label no colour of its own, so the board picks one. Dealing
+    the palette across the labels actually in play beats hashing each name:
+    hashed, four labels landed on two colours, and a colour that two labels
+    share tells the reader nothing. Sorting keeps the deal the same for the
+    same set, so a colour only moves when the set does.
+    """
+    distinct = sorted(set(names))
+    return {name: LABEL_STYLES[i % len(LABEL_STYLES)]
+            for i, name in enumerate(distinct)}
+
 
 def board_priority_label(cfg: Config, issue: Issue) -> str:
     """The issue's priority marker ("P1", or the rule's display name); "" unranked."""
@@ -822,6 +859,18 @@ def managed_labels(cfg: Config) -> set[str]:
     for rule in cfg.status_labels:
         names.update(rule.add, rule.remove, rule.remove_except or ())
     return names
+
+
+def issue_labels_of(issue: Issue, cfg: Config) -> list[str]:
+    """The issue's own labels, as Jira shows them, in Jira's order.
+
+    What a project uses labels for — `MINT_Ph2`, `RLC_Ph.2` — is worth seeing on
+    the card. The labels the config already drives are not: a phase label is
+    drawn in its own colour beside them, and an `exclude_labels` one is what
+    took the card off the board in the first place.
+    """
+    drop = managed_labels(cfg) | set(cfg.exclude_labels)
+    return [name for name in issue.labels if name not in drop]
 
 
 def status_label_changes(cfg: Config, current: list[str],
@@ -1430,18 +1479,22 @@ class Card(Static, can_focus=True):
     # VerticalScroll (the column) binds arrow keys to scrolling, so the focused
     # card carries these bindings itself to take precedence.
     BINDINGS = [
-        Binding("right", "app.move(1)", t("move_right"), key_display="→"),
-        Binding("left", "app.move(-1)", t("move_left"), key_display="←"),
+        # Off the footer: the arrows are the first thing anyone tries on a
+        # kanban card, and the room is better spent on the keys that are not.
+        Binding("right", "app.move(1)", t("move_right"), key_display="→", show=False),
+        Binding("left", "app.move(-1)", t("move_left"), key_display="←", show=False),
         Binding("escape", "app.cancel_move", t("cancel_or_unfocus"), key_display="Esc"),
     ]
 
     def __init__(self, issue: Issue, phase_labels: list[PhaseLabel] | None = None,
-                 priority_tag: str = "", issuetype_color: str = ""):
+                 priority_tag: str = "", issuetype_color: str = "",
+                 labels: list[tuple[str, str]] | None = None):
         super().__init__()
         self.issue = issue
         self.phase_labels = phase_labels or []
         self.priority_tag = priority_tag
         self.issuetype_color = issuetype_color
+        self.labels = labels or []
         self.agent_status: str | None = None
         self.pending_target: str | None = None  # target category (unconfirmed)
         self.render_card()
@@ -1454,10 +1507,17 @@ class Card(Static, can_focus=True):
         pending = f"  [yellow]{t('pending_hint')}[/]" if self.pending_target else ""
         phases = "".join(f"  [cyan]{p.display}[/]"
                          for p in phase_labels_of(self.issue, self.phase_labels))
+        # A chip like Jira's, but coloured: on a board that mixes projects,
+        # the colour is what separates them at a glance.
+        # On the key's line, not the summary's: that line is already what the
+        # card is rather than what it says, and chips in the middle of a title
+        # break the one thing on the card worth reading straight through.
+        labels = "".join(f" [{style}] {name} [/]" for name, style in self.labels)
         kind = kind_markup(self.issue, self.issuetype_color)
         dates = dates_line(self.issue)
-        self.update(f"[b]{self.issue.key}[/b]{tag} {kind}{badge}{phases}"
-                    f"{pending}\n{self.issue.summary}" + (f"\n{dates}" if dates else ""))
+        self.update(f"[b]{self.issue.key}[/b]{tag} {kind}{badge}{phases}{labels}"
+                    f"{pending}\n{self.issue.summary}"
+                    + (f"\n{dates}" if dates else ""))
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         self.focus()
@@ -1485,6 +1545,30 @@ class Column(VerticalScroll):
         """Keep the hidden cards noticeable: their number stays in the title."""
         self.border_title = (f"{self.title} [dim]{t('hidden_count', n=count)}[/]"
                              if count else self.title)
+
+
+class FooterArrow(Static):
+    """A click target at the footer's edge, for the keys that sit past it."""
+
+    def on_click(self) -> None:
+        self.app.action_scroll_footer(-1 if self.id == "footer-left" else 1)
+
+
+class BoardFooter(Footer):
+    """The footer, slid along rather than wrapped.
+
+    It is one line and does not wrap, so on a narrow board its last keys sit
+    past the right edge. The arrows beside it move it a screenful at a time,
+    and the wheel does the same where the pointer already is.
+    """
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        event.stop()
+        self.scroll_relative(x=4, animate=False)
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        event.stop()
+        self.scroll_relative(x=-4, animate=False)
 
 
 class Preview(VerticalScroll, can_focus=False):
@@ -1618,6 +1702,9 @@ class BoardApp(App):
     # a card — and can land after populate() focused the first card, stealing
     # it back. Cards are the only thing worth starting on.
     AUTO_FOCUS = "Card"
+    # Textual's command palette lists its own commands, none of which are the
+    # board's; all it does here is take a slot in the footer.
+    ENABLE_COMMAND_PALETTE = False
     CSS = """
     Horizontal#columns { height: 1fr; }
     .column { width: 1fr; border: round $primary; margin: 0 1; padding: 0 1; }
@@ -1633,8 +1720,18 @@ class BoardApp(App):
     #picker { width: 60; height: auto; max-height: 20; border: thick $accent; background: $surface; padding: 1; }
     TransitionPicker { align: center middle; }
     PhaseLabelPicker { align: center middle; }
+    /* The footer docks itself to the bottom; inside the bar it must not, or
+       it leaves the arrows behind and covers the whole width again. */
+    #footer-bar { dock: bottom; height: 1; }
+    #footer-bar BoardFooter { dock: none; width: 1fr; }
+    FooterArrow { width: 2; content-align: center middle;
+                  background: $footer-background; color: $footer-foreground; }
+    FooterArrow:hover { background: $accent; }
     """
     BINDINGS = [
+        # First, so the way to the whole list is the one key that never falls
+        # off the end of a narrow footer.
+        Binding("question_mark", "toggle_keys", t("show_keys")),
         Binding("r", "refresh", t("refresh")),
         Binding("enter", "confirm_or_launch", t("confirm_or_launch")),
         Binding("escape", "cancel_move", t("cancel_or_unfocus"), show=False),
@@ -1644,7 +1741,12 @@ class BoardApp(App):
         Binding("c", "companion", t("companion")),
         Binding("p", "toggle_preview", t("toggle_preview")),
         Binding("h", "toggle_hidden", t("toggle_hidden")),
+        Binding("L", "toggle_labels", t("toggle_labels")),
         Binding("x", "close_done_tabs", t("close_done_tabs")),
+        # The keys past the right edge of a narrow footer, walked into view.
+        # Off the footer itself: showing them would cost the room they buy.
+        Binding("shift+right", "scroll_footer(1)", t("footer_right"), show=False),
+        Binding("shift+left", "scroll_footer(-1)", t("footer_left"), show=False),
         Binding("down", "focus_next", t("next_card"), show=False),
         Binding("up", "focus_previous", t("prev_card"), show=False),
         Binding("q", "quit", t("quit")),
@@ -1665,6 +1767,10 @@ class BoardApp(App):
         self.issues: list[Issue] = []
         self.ghosts: list[Issue] = []
         self.show_hidden = False
+        # Labels start on: they say which project a card belongs to, which is
+        # what the eye wants first. `L` takes them all off when the board
+        # should stay narrow.
+        self.show_labels = True
         self._launching: set[str] = set()
         self._moving = False
         self._opening_companion = False
@@ -1676,7 +1782,13 @@ class BoardApp(App):
                 yield Column(cat, title)
         with Preview(id="preview"):
             yield Static(id="preview-text")
-        yield Footer()
+        # Compact: the footer is one line and does not wrap, so on a narrow
+        # board the last keys fall off the end. Dropping the padding fits
+        # several more, and the arrows beside it reach the rest.
+        with Horizontal(id="footer-bar"):
+            yield FooterArrow("‹", id="footer-left")
+            yield BoardFooter(compact=True)
+            yield FooterArrow("›", id="footer-right")
 
     def on_mount(self) -> None:
         self.action_refresh()
@@ -1734,6 +1846,10 @@ class BoardApp(App):
             self.ghosts = ghosts
         ghost_keys = {i.key for i in self.ghosts}
         all_issues = list(issues) + self.ghosts
+        # Deal the colours over the whole board, not one column: a label means
+        # the same thing wherever its card has got to.
+        styles = label_styles(name for i in all_issues
+                              for name in issue_labels_of(i, self.cfg))
         for col in self.query(Column):
             col.remove_children()
             column_issues = [i for i in all_issues if i.category == col.category]
@@ -1751,7 +1867,10 @@ class BoardApp(App):
                 for issue in sort_cards(group, self.cfg):
                     card = Card(issue, self.cfg.phase_labels,
                                 board_priority_tag(self.cfg, issue),
-                                self.cfg.issuetype_colors.get(issue.issuetype, ""))
+                                self.cfg.issuetype_colors.get(issue.issuetype, ""),
+                                [(name, styles[name])
+                                 for name in issue_labels_of(issue, self.cfg)]
+                                if self.show_labels else [])
                     if issue.key in hidden:
                         card.add_class("hidden-card")
                     if issue.key in ghost_keys:
@@ -1782,6 +1901,36 @@ class BoardApp(App):
         self.show_hidden = not self.show_hidden
         self.populate(self.issues)
         self.notify(t("hidden_shown" if self.show_hidden else "hidden_hidden"))
+
+    def action_scroll_footer(self, direction: int) -> None:
+        """Slide the footer along, the way a tab bar slides when tabs overflow.
+
+        The footer is one line and does not wrap, so on a narrow board the
+        last keys sit past the right edge. A screenful at a time: the keys are
+        short, and stepping one cell would take all day.
+        """
+        self.query_one(BoardFooter).scroll_relative(x=direction * 10, animate=False)
+
+    def action_toggle_keys(self) -> None:
+        """Open the panel listing every key, and close it with the same `?`.
+
+        Textual gives the panel a show action and a hide action but no toggle,
+        and Esc is spoken for here: it cancels the staged moves.
+        """
+        if self.query(HelpPanel):
+            self.action_hide_help_panel()
+        else:
+            self.action_show_help_panel()
+
+    def action_toggle_labels(self) -> None:
+        """Put every issue label on the cards, and take them all off again.
+
+        One switch for the lot: the labels are there to tell projects apart,
+        and picking which ones show would be another thing to configure.
+        """
+        self.show_labels = not self.show_labels
+        self.populate(self.issues)
+        self.notify(t("labels_shown" if self.show_labels else "labels_hidden"))
 
     def done_tab_rows(self) -> list[tuple[str, str]]:
         """The tabs of done issues, in the board's workspace. Blocks: herdr + Jira."""
