@@ -1732,6 +1732,11 @@ class BoardApp(App):
         self.issues = issues
         if ghosts is not None:
             self.ghosts = ghosts
+        # Every card is about to be dropped and rebuilt, taking the focus with
+        # it. Remember whose card had it: a confirmed move is followed by a
+        # refresh, and the card the user was working on should not hand the
+        # focus to whatever happens to sit top left.
+        focused = self.focused.issue.key if isinstance(self.focused, Card) else ""
         ghost_keys = {i.key for i in self.ghosts}
         all_issues = list(issues) + self.ghosts
         for col in self.query(Column):
@@ -1757,18 +1762,30 @@ class BoardApp(App):
                     if issue.key in ghost_keys:
                         card.add_class("ghost-card")
                     col.mount(card)
-        self.focus_first_card()
+        self.focus_card(focused)
         # A focus set while the cards are still mounting is occasionally
         # dropped, so settle it again once the refresh has run — without
         # stealing a focus that did take.
-        self.call_after_refresh(self.focus_first_card, True)
+        self.call_after_refresh(self.focus_card, focused, True)
         self.update_badges()
 
-    def focus_first_card(self, only_if_unset: bool = False) -> None:
-        if only_if_unset and isinstance(self.focused, Card):
+    def focus_card(self, key: str = "", only_if_unset: bool = False) -> None:
+        """Focus `key`'s card, or the first one when it is not on the board.
+
+        An issue can leave on the refresh that follows a move — completed and
+        past the JQL window, say — so the first card remains the fallback.
+
+        The settle pass asks for the focus only when it is not already on a
+        card of this board. The card it was on has just been removed, and a
+        focus left pointing at that one is no focus at all: the ring is on
+        nothing the user can see.
+        """
+        cards = list(self.query(Card))
+        if only_if_unset and self.focused in cards:
             return
-        if (first := next(iter(self.query(Card)), None)) is not None:
-            first.focus()
+        wanted = next((c for c in cards if c.issue.key == key), None)
+        if (card := wanted or next(iter(cards), None)) is not None:
+            card.focus()
 
     def action_toggle_hidden(self) -> None:
         """Reveal the label-hidden cards (dimmed, in place), and tuck them away.
